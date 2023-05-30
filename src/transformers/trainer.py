@@ -864,6 +864,7 @@ class Trainer:
             dataloader_params["drop_last"] = self.args.dataloader_drop_last
             dataloader_params["worker_init_fn"] = seed_worker
 
+        
         return self.accelerator.prepare(DataLoader(train_dataset, **dataloader_params))
 
     def _get_eval_sampler(self, eval_dataset: Dataset) -> Optional[torch.utils.data.Sampler]:
@@ -917,7 +918,7 @@ class Trainer:
 
         if not isinstance(eval_dataset, torch.utils.data.IterableDataset):
             dataloader_params["sampler"] = self._get_eval_sampler(eval_dataset)
-            dataloader_params["drop_last"] = self.args.dataloader_drop_last
+            dataloader_params["drop_last"] = self.args.dataloader_drop_last        
 
         return self.accelerator.prepare(DataLoader(eval_dataset, **dataloader_params))
 
@@ -951,6 +952,7 @@ class Trainer:
             dataloader_params["drop_last"] = self.args.dataloader_drop_last
 
         # We use the same batch_size as for eval.
+        
         return self.accelerator.prepare(DataLoader(test_dataset, **dataloader_params))
 
     def create_optimizer_and_scheduler(self, num_training_steps: int):
@@ -2887,9 +2889,19 @@ class Trainer:
 
         if self.tokenizer is not None:
             self.tokenizer.save_pretrained(output_dir)
-
+            
+        self.accelerator.gradient_state._reset_state()
         # Good practice: save your training arguments together with the trained model
-        torch.save(self.args, os.path.join(output_dir, TRAINING_ARGS_NAME))
+        import pickle
+        class MyPickler(pickle._Pickler):
+            def save(self, obj):
+                print(f'Pickling object {obj} of type {type(obj)}')
+                pickle._Pickler.save(self, obj)
+        pickle.Pickler = MyPickler
+        self.args.accelerator.gradient_state.active_dataloader = None
+        self.args.accelerator.gradient_state.dataloader_references = [None]
+        self.args.accelerator.gradient_state.sync_gradients = True
+        torch.save(self.args, os.path.join(output_dir, TRAINING_ARGS_NAME), pickle_module=pickle)
 
     def store_flos(self):
         # Storing the number of floating-point operations that went into the model
