@@ -85,14 +85,11 @@ from .trainer_callback import (
     TrainerState,
 )
 from .trainer_pt_utils import (
-    DistributedLengthGroupedSampler,
-    DistributedSamplerWithLoop,
     DistributedTensorGatherer,
     IterableDatasetShard,
     LabelSmoother,
     LengthGroupedSampler,
     SequentialDistributedSampler,
-    ShardSampler,
     distributed_broadcast_scalars,
     distributed_concat,
     find_batch_size,
@@ -102,7 +99,6 @@ from .trainer_pt_utils import (
     nested_concat,
     nested_detach,
     nested_numpify,
-    nested_truncate,
     nested_xla_mesh_reduce,
     reissue_pt_warnings,
 )
@@ -212,6 +208,7 @@ if is_accelerate_available():
     if version.parse(accelerate_version) >= version.parse("0.16"):
         from accelerate import skip_first_batches
     from accelerate import Accelerator, PartialState
+    from accelerate.utils import concatenate
 
 
 if TYPE_CHECKING:
@@ -836,7 +833,6 @@ class Trainer:
         else:
             return RandomSampler(self.train_dataset, generator=generator)
 
-
     def get_train_dataloader(self) -> DataLoader:
         """
         Returns the training [`~torch.utils.data.DataLoader`].
@@ -857,27 +853,21 @@ class Trainer:
             data_collator = self._get_collator_with_removed_columns(data_collator, description="training")
 
         if isinstance(train_dataset, torch.utils.data.IterableDataset):
-            if self.args.world_size > 1:
-                train_dataset = IterableDatasetShard(
+            return self.accelerator.prepare(
+                DataLoader(
                     train_dataset,
                     batch_size=self._train_batch_size,
+                    collate_fn=data_collator,
                     drop_last=self.args.dataloader_drop_last,
-                    num_processes=self.args.world_size,
-                    process_index=self.args.process_index,
+                    num_workers=self.args.dataloader_num_workers,
+                    pin_memory=self.args.dataloader_pin_memory,
                 )
-
-            return DataLoader(
-                train_dataset,
-                batch_size=self._train_batch_size,
-                collate_fn=data_collator,
-                num_workers=self.args.dataloader_num_workers,
-                pin_memory=self.args.dataloader_pin_memory,
             )
 
         train_sampler = self._get_train_sampler()
 
         return self.accelerator.prepare(
-                DataLoader(
+            DataLoader(
                 train_dataset,
                 batch_size=self._train_batch_size,
                 sampler=train_sampler,
@@ -906,7 +896,10 @@ class Trainer:
             else:
                 return SequentialSampler(eval_dataset)
 
-        return SequentialSampler(eval_dataset)
+        if self.args.world_size <= 1:
+            return SequentialSampler(eval_dataset)
+        else:
+            return None
 
     def get_eval_dataloader(self, eval_dataset: Optional[Dataset] = None) -> DataLoader:
         """
@@ -929,25 +922,19 @@ class Trainer:
         else:
             data_collator = self._get_collator_with_removed_columns(data_collator, description="evaluation")
 
-
         if isinstance(eval_dataset, torch.utils.data.IterableDataset):
-            if self.args.world_size > 1:
-                eval_dataset = IterableDatasetShard(
+            return self.accelerator.prepare(
+                DataLoader(
                     eval_dataset,
                     batch_size=self.args.per_device_eval_batch_size,
-                    drop_last=self.args.dataloader_drop_last,
-                    num_processes=self.args.world_size,
-                    process_index=self.args.process_index,
+                    collate_fn=data_collator,
+                    num_workers=self.args.dataloader_num_workers,
+                    pin_memory=self.args.dataloader_pin_memory,
                 )
-            return DataLoader(
-                eval_dataset,
-                batch_size=self.args.eval_batch_size,
-                collate_fn=data_collator,
-                num_workers=self.args.dataloader_num_workers,
-                pin_memory=self.args.dataloader_pin_memory,
             )
 
         eval_sampler = self._get_eval_sampler(eval_dataset)
+
         return self.accelerator.prepare(
             DataLoader(
                 eval_dataset,
@@ -978,34 +965,18 @@ class Trainer:
         else:
             data_collator = self._get_collator_with_removed_columns(data_collator, description="test")
 
-        if isinstance(test_dataset, torch.utils.data.IterableDataset):
-            if self.args.world_size > 1:
-                test_dataset = IterableDatasetShard(
-                    test_dataset,
-                    batch_size=self.args.eval_batch_size,
-                    drop_last=self.args.dataloader_drop_last,
-                    num_processes=self.args.world_size,
-                    process_index=self.args.process_index,
-                )
-            return DataLoader(
+        test_sampler = self._get_eval_sampler(test_dataset)
+
+        return self.accelerator.prepare(
+            DataLoader(
                 test_dataset,
+                sampler=test_sampler,
                 batch_size=self.args.eval_batch_size,
                 collate_fn=data_collator,
+                drop_last=self.args.dataloader_drop_last,
                 num_workers=self.args.dataloader_num_workers,
                 pin_memory=self.args.dataloader_pin_memory,
             )
-
-        test_sampler = self._get_eval_sampler(test_dataset)
-
-        # We use the same batch_size as for eval.
-        return DataLoader(
-            test_dataset,
-            sampler=test_sampler,
-            batch_size=self.args.eval_batch_size,
-            collate_fn=data_collator,
-            drop_last=self.args.dataloader_drop_last,
-            num_workers=self.args.dataloader_num_workers,
-            pin_memory=self.args.dataloader_pin_memory,
         )
 
     def create_optimizer_and_scheduler(self, num_training_steps: int):
@@ -3177,55 +3148,27 @@ class Trainer:
 
             if is_torch_tpu_available():
                 xm.mark_step()
-
             # Update containers on host
             if loss is not None:
-                losses = self._nested_gather(loss.repeat(batch_size))
+                losses = self.accelerator.gather_for_metrics((loss.repeat(batch_size)))
                 losses_host = losses if losses_host is None else torch.cat((losses_host, losses), dim=0)
             if labels is not None:
-                labels = self._pad_across_processes(labels)
+                labels = self.accelerator.pad_across_processes(labels)
             if inputs_decode is not None:
-                inputs_decode = self._pad_across_processes(inputs_decode)
-                inputs_decode = self._nested_gather(inputs_decode)
-                inputs_host = (
-                    inputs_decode
-                    if inputs_host is None
-                    else nested_concat(inputs_host, inputs_decode, padding_index=-100)
-                )
+                inputs_decode = self.accelerator.pad_across_processes(inputs_decode)
+                inputs_decode = self.accelerator.gather_for_metrics((inputs_decode))
+
+                inputs_host = inputs_decode if inputs_host is None else concatenate((inputs_host, inputs_decode))
             if logits is not None:
-                logits = self._pad_across_processes(logits)
+                logits = self.accelerator.pad_across_processes(logits)
                 if self.preprocess_logits_for_metrics is not None:
                     logits = self.preprocess_logits_for_metrics(logits, labels)
-                logits = self._nested_gather(logits)
-                preds_host = logits if preds_host is None else nested_concat(preds_host, logits, padding_index=-100)
+                logits = self.accelerator.gather_for_metrics(logits)
+                preds_host = logits if preds_host is None else concatenate((preds_host, logits))
             if labels is not None:
-                labels = self._nested_gather(labels)
-                labels_host = labels if labels_host is None else nested_concat(labels_host, labels, padding_index=-100)
+                labels = self.accelerator.gather_for_metrics(labels)
+                labels_host = labels if labels_host is None else concatenate((labels_host, labels))
             self.control = self.callback_handler.on_prediction_step(args, self.state, self.control)
-
-            # Gather all tensors and put them back on the CPU if we have done enough accumulation steps.
-            if args.eval_accumulation_steps is not None and (step + 1) % args.eval_accumulation_steps == 0:
-                if losses_host is not None:
-                    losses = nested_numpify(losses_host)
-                    all_losses = losses if all_losses is None else np.concatenate((all_losses, losses), axis=0)
-                if preds_host is not None:
-                    logits = nested_numpify(preds_host)
-                    all_preds = logits if all_preds is None else nested_concat(all_preds, logits, padding_index=-100)
-                if inputs_host is not None:
-                    inputs_decode = nested_numpify(inputs_host)
-                    all_inputs = (
-                        inputs_decode
-                        if all_inputs is None
-                        else nested_concat(all_inputs, inputs_decode, padding_index=-100)
-                    )
-                if labels_host is not None:
-                    labels = nested_numpify(labels_host)
-                    all_labels = (
-                        labels if all_labels is None else nested_concat(all_labels, labels, padding_index=-100)
-                    )
-
-                # Set back to None to begin a new accumulation
-                losses_host, preds_host, inputs_host, labels_host = None, None, None, None
 
         if args.past_index and hasattr(self, "_past"):
             # Clean the state at the end of the evaluation loop
@@ -3233,19 +3176,13 @@ class Trainer:
 
         # Gather all remaining tensors and put them back on the CPU
         if losses_host is not None:
-            losses = nested_numpify(losses_host)
-            all_losses = losses if all_losses is None else np.concatenate((all_losses, losses), axis=0)
+            all_losses = losses_host
         if preds_host is not None:
-            logits = nested_numpify(preds_host)
-            all_preds = logits if all_preds is None else nested_concat(all_preds, logits, padding_index=-100)
+            all_preds = preds_host
         if inputs_host is not None:
-            inputs_decode = nested_numpify(inputs_host)
-            all_inputs = (
-                inputs_decode if all_inputs is None else nested_concat(all_inputs, inputs_decode, padding_index=-100)
-            )
+            all_inputs = inputs_host
         if labels_host is not None:
-            labels = nested_numpify(labels_host)
-            all_labels = labels if all_labels is None else nested_concat(all_labels, labels, padding_index=-100)
+            all_labels = labels_host
 
         # Number of samples
         if has_length(eval_dataset):
@@ -3261,17 +3198,6 @@ class Trainer:
                 num_samples = observed_num_examples
         if num_samples == 0 and observed_num_examples > 0:
             num_samples = observed_num_examples
-
-        # Number of losses has been rounded to a multiple of batch_size and in a distributed training, the number of
-        # samplers has been rounded to a multiple of batch_size, so we truncate.
-        if all_losses is not None:
-            all_losses = all_losses[:num_samples]
-        if all_preds is not None:
-            all_preds = nested_truncate(all_preds, num_samples)
-        if all_labels is not None:
-            all_labels = nested_truncate(all_labels, num_samples)
-        if all_inputs is not None:
-            all_inputs = nested_truncate(all_inputs, num_samples)
 
         # Metrics!
         if self.compute_metrics is not None and all_preds is not None and all_labels is not None:
@@ -3840,7 +3766,6 @@ class Trainer:
             tensors = smp_gather(tensors)
         elif self.args.parallel_mode == ParallelMode.DISTRIBUTED:
             tensors = distributed_concat(tensors)
-
         return nested_numpify(tensors)
 
     def _add_sm_patterns_to_gitignore(self) -> None:
