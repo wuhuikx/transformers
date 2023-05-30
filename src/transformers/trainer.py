@@ -324,6 +324,7 @@ class Trainer:
         optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (None, None),
         preprocess_logits_for_metrics: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
     ):
+        self.accelerator = Accelerator()
         if args is None:
             output_dir = "tmp_trainer"
             logger.info(f"No `TrainingArguments` passed, using `output_dir={output_dir}`.")
@@ -2889,19 +2890,8 @@ class Trainer:
 
         if self.tokenizer is not None:
             self.tokenizer.save_pretrained(output_dir)
-            
-        self.accelerator.gradient_state._reset_state()
-        # Good practice: save your training arguments together with the trained model
-        import pickle
-        class MyPickler(pickle._Pickler):
-            def save(self, obj):
-                print(f'Pickling object {obj} of type {type(obj)}')
-                pickle._Pickler.save(self, obj)
-        pickle.Pickler = MyPickler
-        self.args.accelerator.gradient_state.active_dataloader = None
-        self.args.accelerator.gradient_state.dataloader_references = [None]
-        self.args.accelerator.gradient_state.sync_gradients = True
-        torch.save(self.args, os.path.join(output_dir, TRAINING_ARGS_NAME), pickle_module=pickle)
+
+        torch.save(self.args, os.path.join(output_dir, TRAINING_ARGS_NAME))
 
     def store_flos(self):
         # Storing the number of floating-point operations that went into the model
@@ -3852,7 +3842,3 @@ class Trainer:
     @property
     def distributed_state(self) -> "PartialState":
         return self.args.distributed_state
-
-    @property
-    def accelerator(self) -> "Accelerator":
-        return self.args.accelerator

@@ -1287,7 +1287,6 @@ class TrainerIntegrationTest(TestCasePlus, TrainerIntegrationCommon):
 
             # Reinitialize trainer
             trainer = get_regression_trainer(**kwargs)
-
             trainer.train(resume_from_checkpoint=checkpoint)
             (a1, b1) = trainer.model.a.item(), trainer.model.b.item()
             state1 = dataclasses.asdict(trainer.state)
