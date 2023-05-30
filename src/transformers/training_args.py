@@ -64,7 +64,7 @@ if is_torch_available():
     import torch.distributed as dist
 
 if is_accelerate_available():
-    from accelerate import PartialState
+    from accelerate import Accelerator, PartialState
     from accelerate.utils import DistributedType
 
 if is_torch_tpu_available(check_device=False):
@@ -1700,6 +1700,7 @@ class TrainingArguments:
                 self._n_gpu = torch.cuda.device_count()
                 if device.type == "cuda":
                     torch.cuda.set_device(device)
+        self.accelerator = Accelerator()
         return device
 
     @property
