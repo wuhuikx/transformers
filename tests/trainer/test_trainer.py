@@ -833,66 +833,6 @@ class TrainerIntegrationTest(TestCasePlus, TrainerIntegrationCommon):
         trainer.train()
         trainer.evaluate()
 
-    def test_sampler_seed(self):
-        # nb: we don't want to inherit from IterableDataset to hit the right code path
-        class DummyDataset(torch.utils.data.Dataset):
-            def __init__(self, length: int = 101):
-                self.length = length
-
-            def __len__(self):
-                return self.length
-
-            def __getitem__(self, i):
-                if (i < 0) or (i >= self.length):
-                    raise IndexError
-                return {"input_ids": [i]}
-
-        class DummyModel(PreTrainedModel):
-            def __init__(self, num_params: int):
-                super().__init__(PretrainedConfig())
-                # Add some (unused) params. the point here is that randomness in model_init shouldn't influence
-                # data loader order.
-                self.params = nn.Parameter(torch.randn(num_params))
-
-            def forward(self, input_ids, labels=None):
-                if labels is not None:
-                    return torch.tensor(0.0, device=input_ids.device), input_ids
-                else:
-                    return input_ids
-
-        def _get_first_data_sample(num_params, seed, data_seed, **kwargs):
-            with tempfile.TemporaryDirectory() as tmpdir:
-                trainer = Trainer(
-                    model_init=lambda: DummyModel(num_params),
-                    args=TrainingArguments(
-                        output_dir=tmpdir,
-                        **kwargs,
-                        seed=seed,
-                        data_seed=data_seed,
-                        local_rank=-1,
-                    ),
-                    train_dataset=DummyDataset(),
-                )
-
-                return next(iter(trainer.get_train_dataloader()))
-
-        # test that the seed is passed to the sampler
-        # the codepath we want to hit is world_size <= 1, and both group_by_length
-        for group_by_length in [True, False]:
-            sample42_1 = _get_first_data_sample(num_params=10, seed=42, data_seed=42, group_by_length=group_by_length)
-            sample42_2 = _get_first_data_sample(num_params=11, seed=42, data_seed=42, group_by_length=group_by_length)
-            self.assertTrue(torch.equal(sample42_1["input_ids"], sample42_2["input_ids"]))
-
-            # should get same samples with different seed, so long as data_seed is the same
-            sample42_3 = _get_first_data_sample(num_params=11, seed=11, data_seed=42, group_by_length=group_by_length)
-            self.assertTrue(torch.equal(sample42_1["input_ids"], sample42_3["input_ids"]))
-
-            # make sure we have some randomness in the samples if data_seed is different
-            others = [
-                _get_first_data_sample(num_params=i, seed=42, data_seed=i, group_by_length=group_by_length)
-                for i in range(10)
-            ]
-            self.assertTrue(any(not torch.equal(sample42_1["input_ids"], sample["input_ids"]) for sample in others))
 
     @require_torch_multi_gpu
     def test_data_is_not_parallelized_when_model_is_parallel(self):
@@ -1279,6 +1219,7 @@ class TrainerIntegrationTest(TestCasePlus, TrainerIntegrationCommon):
                 "logging_steps": 5,
             }
             trainer = get_regression_trainer(**kwargs)
+
             trainer.train()
             (a, b) = trainer.model.a.item(), trainer.model.b.item()
             state = dataclasses.asdict(trainer.state)
@@ -1287,7 +1228,6 @@ class TrainerIntegrationTest(TestCasePlus, TrainerIntegrationCommon):
 
             # Reinitialize trainer
             trainer = get_regression_trainer(**kwargs)
-
             trainer.train(resume_from_checkpoint=checkpoint)
             (a1, b1) = trainer.model.a.item(), trainer.model.b.item()
             state1 = dataclasses.asdict(trainer.state)
@@ -1362,6 +1302,62 @@ class TrainerIntegrationTest(TestCasePlus, TrainerIntegrationCommon):
         with self.assertRaises(Exception) as context:
             trainer.train(resume_from_checkpoint=True)
         self.assertTrue("No valid checkpoint found in output directory" in str(context.exception))
+
+    def test_resume_training_with_randomness(self):
+        # For more than 1 GPUs, since the randomness is introduced in the model and with DataParallel (which is used
+        # in this test for more than 2 GPUs), the calls to the torch RNG will happen in a random order (sometimes
+        # GPU 0 will call first and sometimes GPU 1).
+        random_torch = not torch.cuda.is_available() or torch.cuda.device_count() <= 1
+
+        if torch.cuda.is_available():
+            torch.backends.cudnn.deterministic = True
+        train_dataset = RegressionDataset(length=128)
+        eval_dataset = RegressionDataset()
+
+        with self.subTest("Test every step"):
+            config = RegressionModelConfig(a=0, b=2, random_torch=random_torch)
+            model = RegressionRandomPreTrainedModel(config)
+
+            tmp_dir = self.get_auto_remove_tmp_dir()
+            args = RegressionTrainingArguments(tmp_dir, save_steps=5, learning_rate=0.1)
+            trainer = Trainer(model, args, train_dataset=train_dataset, eval_dataset=eval_dataset)
+
+            trainer.train()
+            (a, b) = trainer.model.a.item(), trainer.model.b.item()
+
+            model = RegressionRandomPreTrainedModel(config)
+            trainer = Trainer(model, args, train_dataset=train_dataset, eval_dataset=eval_dataset)
+
+            trainer.train(resume_from_checkpoint=os.path.join(tmp_dir, "checkpoint-15"))
+            (a1, b1) = trainer.model.a.item(), trainer.model.b.item()
+
+            self.assertAlmostEqual(a, a1, delta=1e-5)
+            self.assertAlmostEqual(b, b1, delta=1e-5)
+
+        with self.subTest("Test every epoch"):
+            config = RegressionModelConfig(a=0, b=2, random_torch=random_torch)
+            model = RegressionRandomPreTrainedModel(config)
+
+            tmp_dir = self.get_auto_remove_tmp_dir()
+            args = RegressionTrainingArguments(tmp_dir, save_strategy="epoch", learning_rate=0.1)
+            trainer = Trainer(model, args, train_dataset=train_dataset, eval_dataset=eval_dataset)
+            trainer.train()
+
+            (a, b) = trainer.model.a.item(), trainer.model.b.item()
+
+            model = RegressionRandomPreTrainedModel(config)
+            trainer = Trainer(model, args, train_dataset=train_dataset, eval_dataset=eval_dataset)
+
+            checkpoints = [d for d in os.listdir(tmp_dir) if d.startswith("checkpoint-")]
+            # There should be one checkpoint per epoch.
+            self.assertEqual(len(checkpoints), 3)
+            checkpoint_dir = sorted(checkpoints, key=lambda x: int(x.replace("checkpoint-", "")))[0]
+
+            trainer.train(resume_from_checkpoint=os.path.join(tmp_dir, checkpoint_dir))
+            (a1, b1) = trainer.model.a.item(), trainer.model.b.item()
+
+            self.assertAlmostEqual(a, a1, delta=1e-5)
+            self.assertAlmostEqual(b, b1, delta=1e-5)
 
     @slow
     @require_accelerate
