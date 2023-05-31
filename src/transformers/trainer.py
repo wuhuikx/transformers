@@ -797,17 +797,6 @@ class Trainer:
         if self.train_dataset is None or not has_length(self.train_dataset):
             return None
 
-        generator = None
-        if self.args.world_size <= 1:
-            generator = torch.Generator()
-            # for backwards compatibility, we generate a seed here (which is sampled from a generator seeded with
-            # `args.seed`) if data_seed isn't provided.
-            # Further on in this method, we default to `args.seed` instead.
-            if self.args.data_seed is None:
-                seed = int(torch.empty((), dtype=torch.int64).random_().item())
-            else:
-                seed = self.args.data_seed
-            generator.manual_seed(seed)
 
         seed = self.args.data_seed if self.args.data_seed is not None else self.args.seed
 
@@ -827,11 +816,10 @@ class Trainer:
                 dataset=self.train_dataset,
                 lengths=lengths,
                 model_input_name=model_input_name,
-                generator=generator,
             )
 
         else:
-            return RandomSampler(self.train_dataset, generator=generator)
+            return RandomSampler(self.train_dataset)
 
     def get_train_dataloader(self) -> DataLoader:
         """
@@ -863,6 +851,8 @@ class Trainer:
             dataloader_params["sampler"] = self._get_train_sampler()
             dataloader_params["drop_last"] = self.args.dataloader_drop_last
             dataloader_params["worker_init_fn"] = seed_worker
+
+        # raise ValueError(f'Params: {dataloader_params}')
 
         return self.accelerator.prepare(DataLoader(train_dataset, **dataloader_params))
 
@@ -1797,16 +1787,10 @@ class Trainer:
         model.zero_grad()
 
         self.control = self.callback_handler.on_train_begin(args, self.state, self.control)
-
+        # raise ValueError(f'DataLoader: {train_dataloader}')
         # Skip the first epochs_trained epochs to get the random state of the dataloader at the right point.
         if not args.ignore_data_skip:
             for epoch in range(epochs_trained):
-                is_random_sampler = hasattr(train_dataloader, "sampler") and isinstance(
-                    train_dataloader.sampler, RandomSampler
-                )
-                # if is_torch_less_than_1_11 or not is_random_sampler:
-                    # We just need to begin an iteration to create the randomization of the sampler.
-                    # That was before PyTorch 1.11 however...
                 for _ in train_dataloader:
                     break
                 # else:
@@ -1816,19 +1800,6 @@ class Trainer:
 
         total_batched_samples = 0
         for epoch in range(epochs_trained, num_train_epochs):
-            # if hasattr(train_dataloader, "set_epoch"):
-                # train_dataloader.set_epoch(epoch)
-            # and hasattr(train_dataloader.dataset, "set_epoch"):
-                # raise ValueError()
-                # train_dataloader.dataset.set_epoch(epoch)
-                        # if isinstance(train_dataloader, DataLoaderShard) or isinstance(train_dataloader, DataLoaderDispatcher):
-            #     train_dataloader.batch_sampler.set_epoch(epoch)
-            # if isinstance(train_dataloader, DataLoader) and isinstance(train_dataloader.sampler, DistributedSampler):
-            #     raise ValueError()
-            #     train_dataloader.sampler.set_epoch(epoch)
-            # if hasattr(train_dataloader, "dataset") and isinstance(train_dataloader.dataset, IterableDatasetShard):
-            #     train_dataloader.dataset.set_epoch(epoch)
-
             if is_torch_tpu_available():
                 parallel_loader = pl.ParallelLoader(train_dataloader, [args.device]).per_device_loader(args.device)
                 epoch_iterator = parallel_loader

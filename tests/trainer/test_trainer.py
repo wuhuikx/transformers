@@ -129,7 +129,6 @@ class RegressionDataset:
     def __getitem__(self, i):
         result = {name: y[i] for name, y in zip(self.label_names, self.ys)}
         result["input_x"] = self.x[i]
-        print(f'Index: {i}')
         return result
 
 
@@ -289,19 +288,15 @@ if is_torch_available():
             self.random_torch = config.random_torch
 
         def forward(self, input_x, labels=None, **kwargs):
-            print(f'input_x: {input_x}, a: {self.a}, b: {self.b}')
             y = input_x * self.a + self.b
             if self.random_torch:
                 torch_rand = torch.randn(1).squeeze()
             np_rand = np.random.rand()
             rand_rand = random.random()
-            print(f'torch_rand: {torch_rand}, np_rand: {np_rand}, rand_rand: {rand_rand}')
 
             if self.random_torch:
                 y += 0.05 * torch_rand
-                print(f'y += 0.05 * torch_rand: {y}')
             y += 0.05 * torch.tensor(np_rand + rand_rand)
-            print(f'ending y: {y}, tensor: {torch.tensor(np_rand + rand_rand)}')
 
             if labels is None:
                 return (y,)
@@ -1409,7 +1404,6 @@ class TrainerIntegrationTest(TestCasePlus, TrainerIntegrationCommon):
             tmp_dir = self.get_auto_remove_tmp_dir()
             args = RegressionTrainingArguments(tmp_dir, save_strategy="epoch", learning_rate=0.1)
             trainer = Trainer(model, args, train_dataset=train_dataset, eval_dataset=eval_dataset)
-            print(f'First round:')
             trainer.train()
 
             (a, b) = trainer.model.a.item(), trainer.model.b.item()
@@ -1417,7 +1411,6 @@ class TrainerIntegrationTest(TestCasePlus, TrainerIntegrationCommon):
             set_seed(42)
             model = RegressionRandomPreTrainedModel(config)
             trainer = Trainer(model, args, train_dataset=train_dataset, eval_dataset=eval_dataset)
-            print(f'Second round:')
 
             checkpoints = [d for d in os.listdir(tmp_dir) if d.startswith("checkpoint-")]
             # There should be one checkpoint per epoch.
