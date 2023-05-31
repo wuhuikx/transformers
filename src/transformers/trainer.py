@@ -3180,7 +3180,6 @@ class Trainer:
             # Update containers on host
             if loss is not None:
                 losses = self.accelerator.gather_for_metrics((loss.repeat(batch_size)))
-                losses_host = losses if losses_host is None else torch.cat((losses_host, losses), dim=0)
             if labels is not None:
                 labels = self.accelerator.pad_across_processes(labels)
                 labels = self.accelerator.gather_for_metrics((labels))
@@ -3193,7 +3192,7 @@ class Trainer:
                     logits = self.preprocess_logits_for_metrics(logits, labels)
                 logits = self.accelerator.gather_for_metrics((logits))
 
-            
+            losses_host = losses if losses_host is None else nested_concat(losses_host, losses, padding_index=-100)
             preds_host = logits if preds_host is None else nested_concat(preds_host, logits, padding_index=-100)
             labels_host = labels if labels_host is None else nested_concat(labels_host, labels, padding_index=-100)
             inputs_host = inputs_decode if inputs_host is None else nested_concat(inputs_host, inputs_decode, padding_index=-100)
@@ -3228,7 +3227,8 @@ class Trainer:
                 num_samples = observed_num_examples
         if num_samples == 0 and observed_num_examples > 0:
             num_samples = observed_num_examples
-
+        # if all_losses is not None:
+        #     all_losses = all_losses[:num_samples]
         # Metrics!
         if self.compute_metrics is not None and all_preds is not None and all_labels is not None:
             if args.include_inputs_for_metrics:
@@ -3722,7 +3722,7 @@ class Trainer:
             inputs_decode = self._prepare_input(inputs["input_ids"]) if args.include_inputs_for_metrics else None
 
             if loss is not None:
-                losses = loss.repeat(batch_size)
+                losses = self.accelerator.gather((loss.repeat(batch_size)))
                 losses_host = losses if losses_host is None else torch.cat((losses_host, losses), dim=0)
             if logits is not None:
                 preds_host = logits if preds_host is None else nested_concat(preds_host, logits, padding_index=-100)
