@@ -848,8 +848,6 @@ class Trainer:
             dataloader_params["drop_last"] = self.args.dataloader_drop_last
             dataloader_params["worker_init_fn"] = seed_worker
 
-        # raise ValueError(f'Params: {dataloader_params}')
-
         return self.accelerator.prepare(DataLoader(train_dataset, **dataloader_params))
 
     def _get_eval_sampler(self, eval_dataset: Dataset) -> Optional[torch.utils.data.Sampler]:
@@ -1783,16 +1781,12 @@ class Trainer:
         model.zero_grad()
 
         self.control = self.callback_handler.on_train_begin(args, self.state, self.control)
-        # raise ValueError(f'DataLoader: {train_dataloader}')
+
         # Skip the first epochs_trained epochs to get the random state of the dataloader at the right point.
         if not args.ignore_data_skip:
             for epoch in range(epochs_trained):
                 for _ in train_dataloader:
                     break
-                # else:
-                #     # Otherwise we need to call the whooooole sampler cause there is some random operation added
-                #     # AT THE VERY END!
-                #     _ = list(train_dataloader.sampler)
 
         total_batched_samples = 0
         for epoch in range(epochs_trained, num_train_epochs):
@@ -2864,6 +2858,7 @@ class Trainer:
         if self.tokenizer is not None:
             self.tokenizer.save_pretrained(output_dir)
 
+        # Good practice: save your training arguments together with the trained model
         torch.save(self.args, os.path.join(output_dir, TRAINING_ARGS_NAME))
 
     def store_flos(self):

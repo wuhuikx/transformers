@@ -1279,7 +1279,6 @@ class TrainerIntegrationTest(TestCasePlus, TrainerIntegrationCommon):
                 "logging_steps": 5,
             }
             trainer = get_regression_trainer(**kwargs)
-
             trainer.train()
             (a, b) = trainer.model.a.item(), trainer.model.b.item()
             state = dataclasses.asdict(trainer.state)
@@ -1288,6 +1287,7 @@ class TrainerIntegrationTest(TestCasePlus, TrainerIntegrationCommon):
 
             # Reinitialize trainer
             trainer = get_regression_trainer(**kwargs)
+            
             trainer.train(resume_from_checkpoint=checkpoint)
             (a1, b1) = trainer.model.a.item(), trainer.model.b.item()
             state1 = dataclasses.asdict(trainer.state)
