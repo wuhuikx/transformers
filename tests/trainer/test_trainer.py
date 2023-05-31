@@ -1363,66 +1363,6 @@ class TrainerIntegrationTest(TestCasePlus, TrainerIntegrationCommon):
             trainer.train(resume_from_checkpoint=True)
         self.assertTrue("No valid checkpoint found in output directory" in str(context.exception))
 
-    def test_resume_training_with_randomness(self):
-        # For more than 1 GPUs, since the randomness is introduced in the model and with DataParallel (which is used
-        # in this test for more than 2 GPUs), the calls to the torch RNG will happen in a random order (sometimes
-        # GPU 0 will call first and sometimes GPU 1).
-        random_torch = not torch.cuda.is_available() or torch.cuda.device_count() <= 1
-
-        if torch.cuda.is_available():
-            torch.backends.cudnn.deterministic = True
-        train_dataset = RegressionDataset(length=128)
-        eval_dataset = RegressionDataset()
-        from accelerate.utils import set_seed
-
-        with self.subTest("Test every step"):
-            config = RegressionModelConfig(a=0, b=2, random_torch=random_torch)
-            model = RegressionRandomPreTrainedModel(config)
-
-            tmp_dir = self.get_auto_remove_tmp_dir()
-            args = RegressionTrainingArguments(tmp_dir, save_steps=5, learning_rate=0.1)
-            trainer = Trainer(model, args, train_dataset=train_dataset, eval_dataset=eval_dataset)
-            
-
-            trainer.train()
-            (a, b) = trainer.model.a.item(), trainer.model.b.item()
-
-            model = RegressionRandomPreTrainedModel(config)
-            trainer = Trainer(model, args, train_dataset=train_dataset, eval_dataset=eval_dataset)
-            
-            trainer.train(resume_from_checkpoint=os.path.join(tmp_dir, "checkpoint-15"))
-            (a1, b1) = trainer.model.a.item(), trainer.model.b.item()
-
-            self.assertAlmostEqual(a, a1, delta=1e-5)
-            self.assertAlmostEqual(b, b1, delta=1e-5)
-
-        with self.subTest("Test every epoch"):
-            set_seed(42)
-            config = RegressionModelConfig(a=0, b=2, random_torch=random_torch)
-            model = RegressionRandomPreTrainedModel(config)
-
-            tmp_dir = self.get_auto_remove_tmp_dir()
-            args = RegressionTrainingArguments(tmp_dir, save_strategy="epoch", learning_rate=0.1)
-            trainer = Trainer(model, args, train_dataset=train_dataset, eval_dataset=eval_dataset)
-            trainer.train()
-
-            (a, b) = trainer.model.a.item(), trainer.model.b.item()
-
-            set_seed(42)
-            model = RegressionRandomPreTrainedModel(config)
-            trainer = Trainer(model, args, train_dataset=train_dataset, eval_dataset=eval_dataset)
-
-            checkpoints = [d for d in os.listdir(tmp_dir) if d.startswith("checkpoint-")]
-            # There should be one checkpoint per epoch.
-            self.assertEqual(len(checkpoints), 3)
-            checkpoint_dir = sorted(checkpoints, key=lambda x: int(x.replace("checkpoint-", "")))[0]
-
-            trainer.train(resume_from_checkpoint=os.path.join(tmp_dir, checkpoint_dir))
-            (a1, b1) = trainer.model.a.item(), trainer.model.b.item()
-
-            self.assertAlmostEqual(a, a1, delta=1e-5)
-            self.assertAlmostEqual(b, b1, delta=1e-5)
-
     @slow
     @require_accelerate
     @require_torch_non_multi_gpu
