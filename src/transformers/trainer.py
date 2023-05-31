@@ -3227,8 +3227,7 @@ class Trainer:
                 num_samples = observed_num_examples
         if num_samples == 0 and observed_num_examples > 0:
             num_samples = observed_num_examples
-        # if all_losses is not None:
-        #     all_losses = all_losses[:num_samples]
+
         # Metrics!
         if self.compute_metrics is not None and all_preds is not None and all_labels is not None:
             if args.include_inputs_for_metrics:
