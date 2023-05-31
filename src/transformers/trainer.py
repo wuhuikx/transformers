@@ -208,7 +208,6 @@ if is_accelerate_available():
     if version.parse(accelerate_version) >= version.parse("0.16"):
         from accelerate import skip_first_batches
     from accelerate import Accelerator, PartialState
-    from accelerate.utils import concatenate
 
 
 if TYPE_CHECKING:
@@ -865,7 +864,6 @@ class Trainer:
             dataloader_params["drop_last"] = self.args.dataloader_drop_last
             dataloader_params["worker_init_fn"] = seed_worker
 
-        
         return self.accelerator.prepare(DataLoader(train_dataset, **dataloader_params))
 
     def _get_eval_sampler(self, eval_dataset: Dataset) -> Optional[torch.utils.data.Sampler]:
@@ -919,7 +917,7 @@ class Trainer:
 
         if not isinstance(eval_dataset, torch.utils.data.IterableDataset):
             dataloader_params["sampler"] = self._get_eval_sampler(eval_dataset)
-            dataloader_params["drop_last"] = self.args.dataloader_drop_last      
+            dataloader_params["drop_last"] = self.args.dataloader_drop_last
 
         return self.accelerator.prepare(DataLoader(eval_dataset, **dataloader_params))
 
@@ -953,7 +951,7 @@ class Trainer:
             dataloader_params["drop_last"] = self.args.dataloader_drop_last
 
         # We use the same batch_size as for eval.
-        
+
         return self.accelerator.prepare(DataLoader(test_dataset, **dataloader_params))
 
     def create_optimizer_and_scheduler(self, num_training_steps: int):
@@ -3195,7 +3193,9 @@ class Trainer:
             losses_host = losses if losses_host is None else nested_concat(losses_host, losses, padding_index=-100)
             preds_host = logits if preds_host is None else nested_concat(preds_host, logits, padding_index=-100)
             labels_host = labels if labels_host is None else nested_concat(labels_host, labels, padding_index=-100)
-            inputs_host = inputs_decode if inputs_host is None else nested_concat(inputs_host, inputs_decode, padding_index=-100)
+            inputs_host = (
+                inputs_decode if inputs_host is None else nested_concat(inputs_host, inputs_decode, padding_index=-100)
+            )
 
             self.control = self.callback_handler.on_prediction_step(args, self.state, self.control)
 

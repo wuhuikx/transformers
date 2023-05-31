@@ -930,7 +930,6 @@ class TrainerIntegrationTest(TestCasePlus, TrainerIntegrationCommon):
         x, y = trainer.eval_dataset.x, trainer.eval_dataset.ys[0]
         pred = 1.5 * x + 2.5
         expected_loss = ((pred - y) ** 2).mean()
-        expected_loss = expected_loss.mean()
         self.assertAlmostEqual(results["eval_loss"], expected_loss)
         expected_acc = AlmostAccuracy()((pred, y))["accuracy"]
         self.assertAlmostEqual(results["eval_accuracy"], expected_acc)
@@ -1280,6 +1279,7 @@ class TrainerIntegrationTest(TestCasePlus, TrainerIntegrationCommon):
                 "logging_steps": 5,
             }
             trainer = get_regression_trainer(**kwargs)
+
             trainer.train()
             (a, b) = trainer.model.a.item(), trainer.model.b.item()
             state = dataclasses.asdict(trainer.state)
@@ -1401,7 +1401,7 @@ class TrainerIntegrationTest(TestCasePlus, TrainerIntegrationCommon):
             args = RegressionTrainingArguments(tmp_dir, save_strategy="epoch", learning_rate=0.1)
             trainer = Trainer(model, args, train_dataset=train_dataset, eval_dataset=eval_dataset)
             trainer.train()
-            
+
             (a, b) = trainer.model.a.item(), trainer.model.b.item()
 
             model = RegressionRandomPreTrainedModel(config)
