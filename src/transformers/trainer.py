@@ -919,7 +919,7 @@ class Trainer:
 
         if not isinstance(eval_dataset, torch.utils.data.IterableDataset):
             dataloader_params["sampler"] = self._get_eval_sampler(eval_dataset)
-            dataloader_params["drop_last"] = self.args.dataloader_drop_last        
+            dataloader_params["drop_last"] = self.args.dataloader_drop_last      
 
         return self.accelerator.prepare(DataLoader(eval_dataset, **dataloader_params))
 
@@ -3183,13 +3183,15 @@ class Trainer:
                 losses_host = losses if losses_host is None else torch.cat((losses_host, losses), dim=0)
             if labels is not None:
                 labels = self.accelerator.pad_across_processes(labels)
+                labels = self.accelerator.gather_for_metrics((labels))
             if inputs_decode is not None:
                 inputs_decode = self.accelerator.pad_across_processes(inputs_decode)
+                inputs_decode = self.accelerator.gather_for_metrics((labels))
             if logits is not None:
                 logits = self.accelerator.pad_across_processes(logits)
                 if self.preprocess_logits_for_metrics is not None:
                     logits = self.preprocess_logits_for_metrics(logits, labels)
-            inputs_decode, logits, labels = self.accelerator.gather_for_metrics((inputs_decode, logits, labels))
+                logits = self.accelerator.gather_for_metrics((logits))
 
             
             preds_host = logits if preds_host is None else nested_concat(preds_host, logits, padding_index=-100)
