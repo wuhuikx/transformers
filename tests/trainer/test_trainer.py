@@ -907,9 +907,9 @@ class TrainerIntegrationTest(TestCasePlus, TrainerIntegrationCommon):
         self.assertEqual(trainer.args.n_gpu, 1)
 
         # The batch size of the training and evaluation dataloaders should be 16, not 16 * n_gpu
-        self.assertEqual(trainer.get_train_dataloader().batch_size, 16)
+        self.assertEqual(trainer.get_train_dataloader().total_batch_size, 16)
         self.assertEqual(len(trainer.get_train_dataloader()), 64 // 16)
-        self.assertEqual(trainer.get_eval_dataloader().batch_size, 16)
+        self.assertEqual(trainer.get_eval_dataloader().total_batch_size, 16)
         self.assertEqual(len(trainer.get_eval_dataloader()), 64 // 16)
 
     def test_evaluate(self):
