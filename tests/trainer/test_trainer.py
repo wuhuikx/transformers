@@ -1320,8 +1320,8 @@ class TrainerIntegrationTest(TestCasePlus, TrainerIntegrationCommon):
 
             tmp_dir = self.get_auto_remove_tmp_dir()
             args = RegressionTrainingArguments(tmp_dir, save_steps=5, learning_rate=0.1)
-
             trainer = Trainer(model, args, train_dataset=train_dataset, eval_dataset=eval_dataset)
+
             trainer.train()
             (a, b) = trainer.model.a.item(), trainer.model.b.item()
 
