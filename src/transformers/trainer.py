@@ -1804,22 +1804,30 @@ class Trainer:
                 is_random_sampler = hasattr(train_dataloader, "sampler") and isinstance(
                     train_dataloader.sampler, RandomSampler
                 )
-                if is_torch_less_than_1_11 or not is_random_sampler:
+                # if is_torch_less_than_1_11 or not is_random_sampler:
                     # We just need to begin an iteration to create the randomization of the sampler.
                     # That was before PyTorch 1.11 however...
-                    for _ in train_dataloader:
-                        break
-                else:
-                    # Otherwise we need to call the whooooole sampler cause there is some random operation added
-                    # AT THE VERY END!
-                    _ = list(train_dataloader.sampler)
+                for _ in train_dataloader:
+                    break
+                # else:
+                #     # Otherwise we need to call the whooooole sampler cause there is some random operation added
+                #     # AT THE VERY END!
+                #     _ = list(train_dataloader.sampler)
 
         total_batched_samples = 0
         for epoch in range(epochs_trained, num_train_epochs):
-            if isinstance(train_dataloader, DataLoader) and isinstance(train_dataloader.sampler, DistributedSampler):
-                train_dataloader.sampler.set_epoch(epoch)
-            elif hasattr(train_dataloader, "dataset") and isinstance(train_dataloader.dataset, IterableDatasetShard):
-                train_dataloader.dataset.set_epoch(epoch)
+            # if hasattr(train_dataloader, "set_epoch"):
+                # train_dataloader.set_epoch(epoch)
+            # and hasattr(train_dataloader.dataset, "set_epoch"):
+                # raise ValueError()
+                # train_dataloader.dataset.set_epoch(epoch)
+                        # if isinstance(train_dataloader, DataLoaderShard) or isinstance(train_dataloader, DataLoaderDispatcher):
+            #     train_dataloader.batch_sampler.set_epoch(epoch)
+            # if isinstance(train_dataloader, DataLoader) and isinstance(train_dataloader.sampler, DistributedSampler):
+            #     raise ValueError()
+            #     train_dataloader.sampler.set_epoch(epoch)
+            # if hasattr(train_dataloader, "dataset") and isinstance(train_dataloader.dataset, IterableDatasetShard):
+            #     train_dataloader.dataset.set_epoch(epoch)
 
             if is_torch_tpu_available():
                 parallel_loader = pl.ParallelLoader(train_dataloader, [args.device]).per_device_loader(args.device)
